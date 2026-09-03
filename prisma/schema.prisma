@@ -1,0 +1,135 @@
+// Fetch-It: Automated Logistics Management System — Prisma schema
+// SQLite is used locally (Vercel deployment should use Postgres via @prisma/adapter-pg
+// or external SQLite-compatible hosting such as Turso — schema stays the same).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------- Enums -----------------------------
+// SQLite has no native enums — these are stored as TEXT and validated at the app layer.
+// Naming conventions kept as strings for portability to Postgres later.
+
+// role: CUSTOMER | RIDER | ADMIN
+// vehicleClass: MOTORCYCLE | SEDAN | CLOSED_VAN | FLATBED | REFRIGERATED
+// bookingStatus: PENDING | MATCHED | ACCEPTED | PICKED_UP | IN_TRANSIT | DELIVERED | CANCELLED
+// proofType: SIGNATURE | OTP | PHOTO
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  phone         String?
+  passwordHash  String
+  role          String    @default("CUSTOMER") // CUSTOMER | RIDER | ADMIN
+  // Rider-specific profile fields
+  vehicleClass  String?   // MOTORCYCLE | SEDAN | CLOSED_VAN | FLATBED | REFRIGERATED
+  vehiclePlate  String?
+  rating        Float     @default(5.0)
+  totalDeliveries Int     @default(0)
+  isOnline      Boolean   @default(false)
+  // Live coordinates for the matching engine (only meaningful for riders)
+  lat           Float?
+  lng           Float?
+  locationAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  bookingsAsCustomer  Booking[]       @relation("CustomerBookings")
+  bookingsAsRider     Booking[]       @relation("RiderBookings")
+  trackingUpdates     TrackingUpdate[]
+  deliveryProofs     DeliveryProof[]
+}
+
+model Booking {
+  id              String    @id @default(cuid())
+  refCode         String    @unique // human-friendly reference e.g. FIT-7H3X9
+  customerId      String
+  riderId         String?
+  // Itinerary
+  pickupLabel      String
+  pickupLat        Float
+  pickupLng        Float
+  dropoffLabel     String
+  dropoffLat       Float
+  dropoffLng       Float
+  // Cargo & vehicle
+  vehicleClass    String   // MOTORCYCLE | SEDAN | CLOSED_VAN | FLATBED | REFRIGERATED
+  cargoWeightKg   Float    @default(1.0)
+  cargoNotes      String?
+  // Scheduling
+  scheduledAt      DateTime?
+  // Fare
+  distanceKm       Float
+  baseFare         Float
+  surgeMultiplier   Float   @default(1.0)
+  totalFare        Float
+  currency         String   @default("USD")
+  // Status
+  status          String   @default("PENDING") // PENDING | MATCHED | ACCEPTED | PICKED_UP | IN_TRANSIT | DELIVERED | CANCELLED
+  matchedAt       DateTime?
+  pickedUpAt      DateTime?
+  deliveredAt     DateTime?
+  cancelledAt     DateTime?
+  // ETA in minutes (recomputed as rider moves)
+  etaMinutes      Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  customer        User      @relation("CustomerBookings", fields: [customerId], references: [id])
+  rider           User?     @relation("RiderBookings",  fields: [riderId],    references: [id])
+  trackingUpdates TrackingUpdate[]
+  deliveryProofs DeliveryProof[]
+
+  @@index([status])
+  @@index([riderId])
+  @@index([customerId])
+}
+
+model TrackingUpdate {
+  id          String   @id @default(cuid())
+  bookingId   String
+  riderId     String
+  lat         Float
+  lng         Float
+  speedKph    Float?
+  heading     Float?
+  etaMinutes  Int?
+  createdAt   DateTime @default(now())
+
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  rider       User     @relation(fields: [riderId],   references: [id])
+
+  @@index([bookingId])
+  @@index([createdAt])
+}
+
+model DeliveryProof {
+  id           String   @id @default(cuid())
+  bookingId    String
+  riderId      String
+  // proofType as enum-like string
+  proofType    String   // SIGNATURE | OTP | PHOTO
+  // For SIGNATURE: an SVG path string captured from the signature pad
+  signatureSvg String?
+  // For OTP: 6-digit code verified at delivery
+  otpCode      String?
+  otpVerified  Boolean  @default(false)
+  // For PHOTO: base64-encoded thumbnail OR external URL
+  photoUrl     String?
+  // Recipient confirmation
+  recipientName String?
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  booking      Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  rider        User     @relation(fields: [riderId],   references: [id])
+
+  @@index([bookingId])
+}
